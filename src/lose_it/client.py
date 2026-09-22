@@ -324,6 +324,18 @@ class LoseIt:
             when = date.today()
         return _daily.get_daily_details(self.http, when)
 
+    def diary_with_goals(self, when: date | None = None) -> tuple[list[FoodLogEntry], Any]:
+        """The day's entries plus its budget/goal panel, from a single RPC.
+
+        Returns ``(entries, goals)``; ``goals`` is ``None`` on builds whose
+        response omits the goal panel. Prefer this over :meth:`diary` whenever
+        the caller needs "what's left today" — the calorie budget and the
+        per-nutrient consumed-vs-target rows ride along in the same response.
+        """
+        if when is None:
+            when = date.today()
+        return _daily.get_daily_details_with_goals(self.http, when)
+
     def diary_range(
         self,
         start: date,

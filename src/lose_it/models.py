@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .core._enums import label_for_nutrient, label_for_ordinal
+from .core._enums import label_for_extra_ordinal, label_for_nutrient, label_for_ordinal
 from .core._ids import pk_to_hex
 from .enums import MealType
 
@@ -118,6 +118,77 @@ class UnsavedFoodLogEntry:
 
 
 @dataclass
+class NutrientGoal:
+    """One row of the day's goal panel (wire: ``CustomGoal``).
+
+    ``consumed`` is what the day's log adds up to and ``target`` the goal the
+    user configured. Both travel in the same daily-details response the diary
+    entries do, so "what's left today" needs no second round-trip.
+    """
+
+    key: str  # wire key: "protgrams", "carbgrams", "fiber", "sod", "steps", ...
+    label: str  # display label the app uses: "Protein(g)", "Fiber", ...
+    target: float | None = None
+    consumed: float | None = None
+    comparison: str = ""  # "at_least" / "less_than" / "" when unmapped
+    description: str = ""
+
+    @property
+    def remaining(self) -> float | None:
+        """Distance to :attr:`target` — negative means over budget."""
+        if self.target is None or self.consumed is None:
+            return None
+        return self.target - self.consumed
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "label": self.label,
+            "target": self.target,
+            "consumed": self.consumed,
+            "remaining": self.remaining,
+            "comparison": self.comparison,
+            "description": self.description,
+        }
+
+
+@dataclass
+class DailyGoals:
+    """A day's calorie budget plus its per-nutrient goals.
+
+    Wire: ``DailyLogGoalsState.f0`` (budget), ``DailyLogEntry.f4`` (food
+    calories — the number the app prints as "Food") and the ``CustomGoal``
+    list. Their difference is the app's own "left" figure.
+    """
+
+    calorie_budget: float | None = None
+    calories_consumed: float | None = None
+    goals: list[NutrientGoal] = field(default_factory=list)
+
+    @property
+    def calories_remaining(self) -> float | None:
+        if self.calorie_budget is None or self.calories_consumed is None:
+            return None
+        return self.calorie_budget - self.calories_consumed
+
+    def goal(self, key: str) -> NutrientGoal | None:
+        """Look a goal up by wire key (``"protgrams"``) or label prefix."""
+        needle = key.strip().lower()
+        for g in self.goals:
+            if g.key == needle or g.label.lower().startswith(needle):
+                return g
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "calorie_budget": self.calorie_budget,
+            "calories_consumed": self.calories_consumed,
+            "calories_remaining": self.calories_remaining,
+            "goals": [g.to_dict() for g in self.goals],
+        }
+
+
+@dataclass
 class FoodLogEntry:
     """A logged diary entry as returned from ``getDailyDetailsIncludingPendingForDate``.
 
@@ -196,6 +267,16 @@ class FoodLogEntry:
             return f"meal{self.meal_ordinal}"
 
     @property
+    def meal_label(self) -> str:
+        """Meal grouping as the app renders it (``"Morning Snacks"``, ...).
+
+        The app splits the snacks slot into Morning / Afternoon groups; that split
+        arrives on the wire as the entry's ``extra`` ordinal and stays invisible to
+        anyone reading only :attr:`meal_name`.
+        """
+        return label_for_extra_ordinal(self.extra_ordinal, meal=self.meal_name)
+
+    @property
     def food_measure_unit(self) -> str:
         """Label for :attr:`food_measure_ordinal` (``"grams"``, ``"each"``, …).
 
@@ -225,6 +306,7 @@ class FoodLogEntry:
         return {
             "meal": self.meal_name,
             "meal_ordinal": self.meal_ordinal,
+            "meal_label": self.meal_label,
             "food_name": self.food_name,
             "food_brand": self.food_brand,
             "food_category": self.food_category,

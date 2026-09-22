@@ -5,6 +5,7 @@ from __future__ import annotations
 from lose_it.core._enums import (
     FoodMeasurement,
     FoodNutrient,
+    label_for_extra_ordinal,
     label_for_nutrient,
     label_for_ordinal,
 )
@@ -26,7 +27,30 @@ def test_known_ordinals_label_to_lowercase_enum_names() -> None:
     assert label_for_ordinal(27) == "serving"
     assert label_for_ordinal(33) == "scoop"
     assert label_for_ordinal(45) == "container"
-    assert label_for_ordinal(46) == "pie"
+    assert label_for_ordinal(24) == "stick"
+    assert label_for_ordinal(46) == "package"
+
+
+def test_extra_meal_ordinals_name_the_app_snack_groups() -> None:
+    """The snack sub-slot the app renders as its own group.
+
+    Verified against the app UI: the entries filed under "Morning Snacks" carry
+    extra ordinal 1 and the "Afternoon Snacks" ones carry 2, while main meals
+    (and plain "Snacks") carry 3 with nothing extra to say.
+    """
+    assert label_for_extra_ordinal(1, meal="snacks") == "Morning Snacks"
+    assert label_for_extra_ordinal(2, meal="snacks") == "Afternoon Snacks"
+    assert label_for_extra_ordinal(3, meal="snacks") == "Snacks"
+    assert label_for_extra_ordinal(None, meal="snacks") == "Snacks"
+    # Main meals ignore the extra ordinal entirely.
+    assert label_for_extra_ordinal(3, meal="lunch") == "Lunch"
+    assert label_for_extra_ordinal(1, meal="breakfast") == "Breakfast"
+
+
+def test_pie_stays_an_alias_for_package() -> None:
+    """``resolve_unit("pie")`` predates the app-verified label; keep it working."""
+    assert FoodMeasurement.PIE == FoodMeasurement.PACKAGE == 46
+    assert FoodMeasurement.PACKAGE.name == "PACKAGE"
 
 
 def test_unknown_ordinal_falls_back_to_unknown_ord_n() -> None:

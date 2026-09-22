@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 
 from .._logging import logger
-from ..models import FoodLogEntry
+from ..models import DailyGoals, FoodLogEntry, NutrientGoal
 from ._config import Config
 from ._dates import day_number_for
 from ._decoder import decode_response
@@ -758,3 +758,131 @@ def _looks_like_too_much_data(message: str) -> bool:
     if m is not None:
         return True
     return any(needle in lower for needle in ("oversize", "too large", "size limit"))
+
+
+# ── Daily goals / budget ─────────────────────────────────────────────────────
+#
+# The daily-details response that carries the FoodLogEntries also carries the
+# user's goal panel: one ``CustomGoal`` per tracked nutrient (consumed in f1,
+# target in f6), the day's calorie budget in ``DailyLogGoalsState.f0`` and the
+# food calories the app prints as "Food" in ``DailyLogEntry.f4``. Nothing
+# downstream parsed them, so "what's left for my goal" was unanswerable from
+# the MCP even though the wire carried the numbers.
+
+_CUSTOM_GOAL_TYPE = "com.loseit.core.client.model.CustomGoal/"
+_DAILY_LOG_ENTRY_TYPE = "com.loseit.core.client.model.DailyLogEntry/"
+_DAILY_LOG_GOALS_STATE_TYPE = "com.loseit.core.client.model.DailyLogGoalsState/"
+_NUTRIENT_SUMMARY_TYPE = "com.loseit.core.client.model.NutrientSummary/"
+
+#: ``CustomGoal.f8`` key -> the ``NutrientSummary`` field holding that
+#: nutrient's *consumed* total for the day.
+#:
+#: The consumed total deliberately does NOT come from ``CustomGoal.f1``, which
+#: looks like the same number but is only correct for the day the app last
+#: synced: on a past day's response f1 held 3 g of protein where the app header
+#: read 158 g. ``NutrientSummary`` matched the app's own totals for all four
+#: days checked (and for the fat/carb/fiber/sodium/saturated-fat rows too).
+_GOAL_KEY_TO_SUMMARY: dict[str, str] = {
+    "carbgrams": "f1",
+    "fatgrams": "f6",
+    "fiber": "f7",
+    "protgrams": "f10",
+    "sfatgrams": "f11",
+    "sod": "f12",
+}
+
+#: ``CustomGoal.f5`` — what the goal asks for; 3 is "eat less than".
+_GOAL_COMPARISONS: dict[int, str] = {
+    0: "exactly",
+    1: "at_least",
+    2: "at_most",
+    3: "less_than",
+}
+
+
+def _number(node: Any, key: str) -> float | None:
+    """Read ``node[key]`` as a float, or ``None`` when absent or non-numeric."""
+    if not isinstance(node, dict):
+        return None
+    val = node.get(key)
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return None
+    return float(val)
+
+
+def parse_goals(decoded_or_text: Any) -> DailyGoals | None:
+    """Extract the day's budget + per-nutrient goals from a daily response.
+
+    Accepts the raw GWT text (decoded here) or an already-decoded tree, which
+    keeps the parser testable without a captured wire fixture. Returns ``None``
+    when the response carries no goal panel at all, so callers degrade instead
+    of inventing targets.
+    """
+    decoded = (
+        decode_response(decoded_or_text) if isinstance(decoded_or_text, str) else decoded_or_text
+    )
+    if decoded is None:
+        return None
+
+    goals: list[NutrientGoal] = []
+    budget: float | None = None
+    food_calories: float | None = None
+    summary: dict[str, Any] | None = None
+    for node in _walk_dicts(decoded):
+        t = node.get("__type__")
+        if not isinstance(t, str):
+            continue
+        if t.startswith(_CUSTOM_GOAL_TYPE):
+            key = str(node.get("f8") or node.get("f16") or "")
+            cmp_obj = node.get("f5")
+            cmp_ord = cmp_obj.get("ordinal") if isinstance(cmp_obj, dict) else None
+            goals.append(
+                NutrientGoal(
+                    key=key,
+                    label=str(node.get("f10") or key),
+                    target=_number(node, "f6"),
+                    comparison=(
+                        _GOAL_COMPARISONS.get(int(cmp_ord), "")
+                        if isinstance(cmp_ord, (int, float))
+                        else ""
+                    ),
+                    description=str(node.get("f3") or ""),
+                )
+            )
+        elif t.startswith(_DAILY_LOG_GOALS_STATE_TYPE) and budget is None:
+            budget = _number(node, "f0")
+        elif t.startswith(_DAILY_LOG_ENTRY_TYPE) and food_calories is None:
+            food_calories = _number(node, "f4")
+        elif t.startswith(_NUTRIENT_SUMMARY_TYPE) and summary is None:
+            summary = node
+
+    # Attach the day's consumed totals from NutrientSummary (see the note on
+    # _GOAL_KEY_TO_SUMMARY for why CustomGoal.f1 is not used here).
+    for goal in goals:
+        slot = _GOAL_KEY_TO_SUMMARY.get(goal.key)
+        if slot is not None and summary is not None:
+            goal.consumed = _number(summary, slot)
+
+    if not goals and budget is None and food_calories is None:
+        return None
+    return DailyGoals(calorie_budget=budget, calories_consumed=food_calories, goals=goals)
+
+
+def get_daily_details_with_goals(
+    http: HttpClient, target_date: date
+) -> tuple[list[FoodLogEntry], DailyGoals | None]:
+    """Fetch a day's entries **and** its goal panel from one RPC.
+
+    Same round-trip as :func:`get_daily_details` — the goals ride along in the
+    same response — so a caller that wants both pays for one call, not two.
+    """
+    logger.info("daily.get_daily_details_with_goals: date={d}", d=target_date.isoformat())
+    day_num = day_number_for(target_date)
+    day_key = get_daydate_key(http, day_num)
+    text = http.post_rpc(_build_payload(http.config, target_date, day_key))
+    entries = parse_entries(
+        text,
+        default_hours_from_gmt=http.config.hours_from_gmt,
+        user_name=http.config.user_name,
+    )
+    return entries, parse_goals(text)

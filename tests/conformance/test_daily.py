@@ -231,3 +231,95 @@ def test_qty_in_unit_falls_back_to_f5_and_stays_none_when_absent() -> None:
     )
     assert absent is not None
     assert absent.qty_in_unit is None
+
+
+def test_parse_goals_reads_budget_and_per_nutrient_targets() -> None:
+    """Goals ride along in the diary response; parse them without the wire.
+
+    Shape mirrors the live payload: one ``CustomGoal`` per nutrient (f1 =
+    consumed, f6 = target, f8 = key), the day's budget in
+    ``DailyLogGoalsState.f0`` and the app's "Food" calories in
+    ``DailyLogEntry.f4``.
+    """
+    decoded = {
+        "f3": {
+            "f1": {
+                "items": [
+                    {
+                        "__type__": "com.loseit.core.client.model.CustomGoal/1",
+                        "f1": 3.0,
+                        "f3": "Eat at least a specified amount of protein each day.",
+                        "f5": {"ordinal": 1},
+                        "f6": 170.0,
+                        "f8": "protgrams",
+                        "f10": "Protein(g)",
+                    },
+                    {
+                        "__type__": "com.loseit.core.client.model.CustomGoal/3",
+                        "f5": {"ordinal": 2},
+                        "f6": 5000.0,
+                        "f8": "steps",
+                        "f10": "Steps",
+                    },
+                    {
+                        "__type__": "com.loseit.core.client.model.CustomGoal/2",
+                        "f1": 12.57,
+                        "f5": {"ordinal": 3},
+                        "f6": 35.0,
+                        "f8": "fiber",
+                        "f10": "Fiber",
+                    },
+                ]
+            },
+            # Day totals live here; CustomGoal.f1 goes stale on past days, so
+            # the summary is the source for `consumed` (protein f1=3 below is
+            # deliberately wrong-looking — it must NOT be what we report).
+            "f9": {
+                "__type__": "com.loseit.core.client.model.NutrientSummary/9",
+                "f1": 191.25,
+                "f6": 58.77,
+                "f7": 27.33,
+                "f10": 157.65,
+                "f11": 12.0,
+                "f12": 981.77,
+            },
+            "f3": {
+                "__type__": "com.loseit.core.client.model.DailyLogEntry/3",
+                "f4": 1658.0,
+                "f6": {
+                    "__type__": "com.loseit.core.client.model.DailyLogGoalsState/4",
+                    "f0": 1957.59,
+                },
+            },
+        }
+    }
+    goals = daily.parse_goals(decoded)
+    assert goals is not None
+    assert goals.calorie_budget == pytest.approx(1957.59)
+    assert goals.calories_consumed == pytest.approx(1658.0)
+    assert goals.calories_remaining == pytest.approx(299.59)
+
+    protein = goals.goal("protgrams")
+    assert protein is not None
+    assert protein.target == pytest.approx(170.0)
+    # Consumed comes from the day summary, not the stale CustomGoal.f1 (= 3.0).
+    assert protein.consumed == pytest.approx(157.65)
+    assert protein.remaining == pytest.approx(12.35)
+    assert protein.comparison == "at_least"
+
+    # A goal with no NutrientSummary slot (steps are not food-derived) keeps
+    # `consumed` unset rather than inheriting the stale CustomGoal.f1.
+    steps = goals.goal("steps")
+    assert steps is not None
+    assert steps.target == pytest.approx(5000.0)
+    assert steps.consumed is None
+
+    fiber = goals.goal("fiber")
+    assert fiber is not None
+    assert fiber.consumed == pytest.approx(27.33)
+    assert fiber.comparison == "less_than"
+
+
+def test_parse_goals_returns_none_without_a_goal_panel() -> None:
+    """No goal panel in the response -> ``None``, never invented targets."""
+    assert daily.parse_goals({"f3": {"f1": {"items": []}}}) is None

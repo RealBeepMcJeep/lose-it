@@ -42,11 +42,19 @@ class FoodMeasurement(IntEnum):
     MILLILITER = 11
     BOTTLE = 19  # confirmed: Slimfast shake bottle, Diet Coke can (f0=1.666 = 12oz/7.2oz)
     CAN = 21  # confirmed: Pepsi/Mountain Dew/Dr Pepper per_serving_ml=355 (= 12 fl oz US can)
+    STICK = 24  # confirmed vs the app UI: chicken skewers render as "4 Sticks"
     SLICE = 26
     SERVING = 27
     SCOOP = 33
     CONTAINER = 45  # confirmed: Chobani/Fage "Indiv. Container" / "Single Serve" yogurts
-    PIE = 46  # confirmed: Milton's cauliflower pizza (f4=0.25 = 1/4 pie per serving)
+    # 46 renders as "Package" in the app — verified against the official UI for two
+    # different foods (Fresh Additions steak bites "1 Package" / "2 Packages", Jimmybar
+    # protein bar "1 Package"). The previous "pie" label came from a Milton's
+    # cauliflower-pizza serving (f4=0.25 = 1/4 pie): an inference from that food, not
+    # from the app's display. If a pizza ever shows "Pie" with this ordinal, the
+    # mapping is per-food contextual and needs an override.
+    PACKAGE = 46
+    PIE = 46  # legacy alias: resolve_unit("pie") predates the app-verified label
 
     # Observed but per-food semantics inconsistent — needs more probing
     # before labeling. Each surfaces as ``unit="unknown_ord_<N>"`` in JSON
@@ -131,3 +139,28 @@ def label_for_nutrient(ordinal: int | None) -> str:
         return FoodNutrient(int(ordinal)).name.lower()
     except (ValueError, TypeError):
         return f"unknown_nutrient_{ordinal}"
+
+
+# ``FoodLogEntryTypeExtra`` ordinals: which *snack* slot an entry was filed under
+# when its meal ordinal is ``snacks`` (3). Verified against the app UI across four
+# days of diary — 1 -> "Morning Snacks", 2 -> "Afternoon Snacks", 3 (and anything
+# unmapped) -> the plain "Snacks" group. Main meals carry 3 as well, which is why
+# the meal ordinal has to gate this lookup.
+EXTRA_MEAL_LABELS: dict[int, str] = {
+    1: "Morning Snacks",
+    2: "Afternoon Snacks",
+}
+
+
+def label_for_extra_ordinal(ordinal: int | None, *, meal: str = "snacks") -> str:
+    """App-facing meal-group label, honouring the snack sub-slot.
+
+    ``meal`` is the plain meal name from :class:`~lose_it.enums.MealType`
+    (``"snacks"``, ``"lunch"``, ...). Every meal that isn't the snacks slot keeps
+    its own name; snack entries resolve through :data:`EXTRA_MEAL_LABELS`.
+    """
+    if meal != "snacks":
+        return meal.capitalize()
+    if ordinal is None:
+        return "Snacks"
+    return EXTRA_MEAL_LABELS.get(int(ordinal), "Snacks")
