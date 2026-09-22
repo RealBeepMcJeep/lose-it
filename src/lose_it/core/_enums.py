@@ -8,9 +8,10 @@ for a food's portion, the other identifies a nutrient slot in the
 food's nutrient HashMap.
 
 These ordinals are stable across Lose It! releases (they're Java enum
-values on the server). Only add entries once a value has been observed
-across multiple foods + cross-referenced against the official UI's
-labeled display — speculative entries make the JSON output lie.
+values on the server). Only add entries once a value has been verified
+against a real source of truth — the app's own enum (see
+:class:`FoodMeasurement`) or the app's labeled display. Speculative
+entries make the JSON output lie.
 """
 
 from __future__ import annotations
@@ -21,55 +22,85 @@ from enum import IntEnum
 class FoodMeasurement(IntEnum):
     """``FoodMeasure.ordinal`` values — the *unit* a food's portion is stored in.
 
-    Confirmed via probing >50 distinct Lose It! foods. Each value is
-    matched against multiple foods and a sanity-check on the food's
-    name / per-serving quantity to avoid mis-labeling.
+    This table is not inferred. It is the app's own enum, read out of the APK
+    ``loseit-18.4.600.apk`` (sha256 ``265f7dc66c727fcafbd8cf926fa3415e7ffd4d4b6c3117a87dca43dbd5784506``):
+    the app ships protobuf models under ``com.fitnow.foundation.food.v1``, and its
+    measure enum is a generated Java enum (R8-renamed to ``Lsx8`` in
+    ``classes3.dex``) whose ``<clinit>`` constructs every member in declaration
+    order — and that declaration order *is* the wire ordinal.
+
+    Cross-check: all 14 ordinals this SDK had previously confirmed from live wire
+    data match this table exactly, and the four that used to be listed as
+    "observed but unconfirmed" (6, 16, 34, 35) are named by the app itself.
+    Regenerate with ``scripts/extract_measure_enum.py``.
 
     Note: the Java class for this enum is ``FoodMeasurement`` (from
     ``healthdata.model.shared.food``), the same class used as the key
     type in the FoodNutrients HashMap. The semantics differ by context —
     on a ``FoodMeasure`` it's a unit; in a HashMap key it's a nutrient
     slot (see :class:`FoodNutrient`).
+
+    Member names follow the APK's own spelling, except ``GRAMS`` where the app's
+    member is ``GRAM`` — the label ("grams") is what consumers see and is pinned
+    by tests.
     """
 
+    UNSPECIFIED = 0
     TEASPOON = 1  # confirmed: Raw Honey "1 Teaspoon" per_serving_ml=4.92892 (= exactly 1 US tsp)
     TABLESPOON = 2
     CUP = 3
     PIECE = 4  # confirmed: Reese's PB Eggs (f4=4, f5=3 = 3 candies), gum sticks
     EACH = 5
+    OUNCE = (
+        6  # app-verified: explains the old "per-food g/unit varies" note (44g chicken, 100g steak)
+    )
+    POUND = 7
     GRAMS = 8
+    KILOGRAM = 9
     FLUID_OUNCE = 10
     MILLILITER = 11
+    LITER = 12
+    GALLON = 13
+    PINT = 14
+    QUART = 15
+    MILLIGRAM = 16  # app-verified; previously unknown_ord_16 (Orgain protein shake)
+    MICROGRAM = 17
+    INTAKE = 18
     BOTTLE = 19  # confirmed: Slimfast shake bottle, Diet Coke can (f0=1.666 = 12oz/7.2oz)
+    BOX = 20
     CAN = 21  # confirmed: Pepsi/Mountain Dew/Dr Pepper per_serving_ml=355 (= 12 fl oz US can)
+    CUBE = 22
+    JAR = 23
     STICK = 24  # confirmed vs the app UI: chicken skewers render as "4 Sticks"
+    TABLET = 25
     SLICE = 26
     SERVING = 27
+    CAN300 = 28  # can sizes: 300/303/401/404 are US can trade sizes, not millilitres
+    CAN303 = 29
+    CAN401 = 30
+    CAN404 = 31
+    INDIVIDUAL_PA = 32
     SCOOP = 33
+    METRIC_CUP = 34  # app-verified; previously unknown_ord_34 (Quaker dry oats, 40 g "1 unit")
+    DRY_CUP = 35  # app-verified; previously unknown_ord_35 (SkinnyPop 28 g "1 unit" = 1 oz dry cup)
+    IMPERIAL_FLUID_OUNCE = 36
+    IMPERIAL_GALLON = 37
+    IMPERIAL_QUART = 38
+    IMPERIAL_PINT = 39
+    TABLESPOON_AUS = 40  # Australian tablespoon (20 mL, not 15)
+    DESSERT_SPOON = 41
+    POT = 42
+    PUNNET = 43  # berry punnet
+    AS_ENTERED = 44
     CONTAINER = 45  # confirmed: Chobani/Fage "Indiv. Container" / "Single Serve" yogurts
-    # 46 renders as "Package" in the app — verified against the official UI for two
-    # different foods (Fresh Additions steak bites "1 Package" / "2 Packages", Jimmybar
-    # protein bar "1 Package"). The previous "pie" label came from a Milton's
-    # cauliflower-pizza serving (f4=0.25 = 1/4 pie): an inference from that food, not
-    # from the app's display. If a pizza ever shows "Pie" with this ordinal, the
-    # mapping is per-food contextual and needs an override.
-    PACKAGE = 46
-    PIE = 46  # legacy alias: resolve_unit("pie") predates the app-verified label
+    PACKAGE = 46  # confirmed vs the app UI: steak bites "1 Package" / "2 Packages", Jimmybar bar
+    POUCH = 47
 
-    # Observed but per-food semantics inconsistent — needs more probing
-    # before labeling. Each surfaces as ``unit="unknown_ord_<N>"`` in JSON
-    # output so consumers can still see something informative:
-    #   6   — appears on cooked meat / steak / pasta. Per-food g/unit ratio
-    #         varies (44g for chicken skinless cooked, 59g for grilled,
-    #         100g for steak qty=1) — likely a per-food display unit, not
-    #         a stable measurement constant.
-    #   16  — observed on Orgain protein shake (RTD).
-    #   34  — only one sample (Quaker Old Fashioned Oats Dry, 40g per
-    #         "1 unit" = 150 cal = standard ½-cup dry). Could be "½ cup"
-    #         but a single sample isn't enough.
-    #   35  — inconsistent: SkinnyPop 1 unit = 28g (= 1 oz, looks like
-    #         "ounce") but Bush's kale 1 unit = ~115g (not an ounce).
-    #         Likely "package" / "bag" / "ounce" depending on the food.
+    # Legacy alias, deliberately NOT an app member: "pie" was a bad guess. Ordinal
+    # 46 is PACKAGE, and the app's enum has no pie unit anywhere. Kept only so the
+    # pre-existing ``resolve_unit("pie")`` escape hatch keeps resolving; new callers
+    # should use PACKAGE (or the raw ordinal).
+    PIE = 46
 
 
 class FoodNutrient(IntEnum):

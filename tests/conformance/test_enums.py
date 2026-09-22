@@ -31,6 +31,45 @@ def test_known_ordinals_label_to_lowercase_enum_names() -> None:
     assert label_for_ordinal(46) == "package"
 
 
+def test_measure_table_mirrors_the_app_enum_exactly() -> None:
+    """The table is the app's own enum, read out of the APK — not inferred.
+
+    ``loseit-18.4.600.apk`` ships the measure enum as a generated Java enum
+    (R8-renamed to ``Lsx8`` in ``classes3.dex``) whose ``<clinit>`` constructs
+    every member in declaration order, and declaration order *is* the wire
+    ordinal. So the table has to be dense 0..47: a gap would mean a member we
+    dropped, and any drift in the middle would silently relabel real foods.
+    """
+    assert len(FoodMeasurement) == 48
+    assert [m.value for m in FoodMeasurement] == list(range(48))
+    # The four ordinals that used to surface as unknown_ord_N are now named by
+    # the app itself (6 = the "per-food unit that varies" note, 16 = Orgain
+    # shake, 34 = Quaker dry oats, 35 = the SkinnyPop/kale inconsistency).
+    assert label_for_ordinal(6) == "ounce"
+    assert label_for_ordinal(16) == "milligram"
+    assert label_for_ordinal(34) == "metric_cup"
+    assert label_for_ordinal(35) == "dry_cup"
+    # A sample of the members this table gained from the APK.
+    assert label_for_ordinal(0) == "unspecified"
+    assert label_for_ordinal(20) == "box"
+    assert label_for_ordinal(22) == "cube"
+    assert label_for_ordinal(23) == "jar"
+    assert label_for_ordinal(25) == "tablet"
+    assert label_for_ordinal(28) == "can300"
+    assert label_for_ordinal(32) == "individual_pa"
+    assert label_for_ordinal(41) == "dessert_spoon"
+    assert label_for_ordinal(42) == "pot"
+    assert label_for_ordinal(43) == "punnet"
+    assert label_for_ordinal(44) == "as_entered"
+    assert label_for_ordinal(47) == "pouch"
+
+
+def test_ordinal_off_the_end_of_the_table_falls_back() -> None:
+    """A unit added after 18.4.600 still surfaces verbatim rather than lying."""
+    assert label_for_ordinal(48) == "unknown_ord_48"
+    assert label_for_ordinal(999) == "unknown_ord_999"
+
+
 def test_extra_meal_ordinals_name_the_app_snack_groups() -> None:
     """The snack sub-slot the app renders as its own group.
 
@@ -51,20 +90,6 @@ def test_pie_stays_an_alias_for_package() -> None:
     """``resolve_unit("pie")`` predates the app-verified label; keep it working."""
     assert FoodMeasurement.PIE == FoodMeasurement.PACKAGE == 46
     assert FoodMeasurement.PACKAGE.name == "PACKAGE"
-
-
-def test_unknown_ordinal_falls_back_to_unknown_ord_n() -> None:
-    """Not-yet-labelled ordinals surface as ``unknown_ord_<N>``.
-
-    A few observed-but-not-yet-confirmed ords: 6 (per-food display unit
-    that varies; not a stable measurement constant), 16 (Orgain protein
-    shake), 34 (single Quaker dry-oats sample), 35 (inconsistent across
-    SkinnyPop / kale cans).
-    """
-    assert label_for_ordinal(6) == "unknown_ord_6"
-    assert label_for_ordinal(16) == "unknown_ord_16"
-    assert label_for_ordinal(34) == "unknown_ord_34"
-    assert label_for_ordinal(35) == "unknown_ord_35"
 
 
 def test_label_for_none_is_unknown() -> None:
