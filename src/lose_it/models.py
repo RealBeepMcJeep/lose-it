@@ -140,6 +140,17 @@ class FoodLogEntry:
     food_measure_ordinal: int
     servings: float
     food_identifier_code: str
+    # The quantity the entry was logged in, expressed in
+    # :attr:`food_measure_unit` (wire: ``FoodServingSize.f4``, falling back to
+    # ``f5``). ``servings`` is the *canonical serving count*, so the two
+    # disagree whenever the logged unit is smaller than the food's stored
+    # serving: a 4-g-per-serving powder logged as 2 tbsp arrives as
+    # ``servings=3.0`` / ``qty_in_unit=2.0``. Anything that shows a user "what
+    # they logged" must read this field, never ``servings`` — labelling the
+    # serving count with the measure unit invents a portion nobody ate.
+    # Default ``None`` keeps the dataclass instantiable from fixtures captured
+    # before this surface landed.
+    qty_in_unit: float | None = None
     # The order is significant — Java's HashMap iteration order, preserved from server.
     nutrients_ordered: list[tuple[int, float]] = field(default_factory=list)
     # Server-side audit timestamps. ``created_at`` is the FoodLogEntry's
@@ -219,6 +230,7 @@ class FoodLogEntry:
             "food_category": self.food_category,
             "food_identifier_code": self.food_identifier_code,
             "servings": self.servings,
+            "qty_in_unit": self.qty_in_unit,
             "calories": self.calories,
             "nutrients": raw_nutrients,
             "nutrients_by_label": self.nutrients_by_label,

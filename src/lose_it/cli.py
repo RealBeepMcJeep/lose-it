@@ -406,6 +406,21 @@ def _print_search_results(results: list[FoodSearchResult]) -> None:
         typer.echo(f"{i + 1:>3}  {name:50} {brand:20} {food_id_short}")
 
 
+def _portion_text(e: FoodLogEntry) -> str:
+    """What the user logged, in the unit they logged it in.
+
+    ``servings`` is the canonical serving count, which reads as a portion the
+    user never chose whenever their unit is smaller than the food's stored
+    serving — 2 tbsp of a 4-g-per-serving powder arrives as ``servings=3.0``
+    and used to print as "3 tablespoon". Prefer the wire's quantity-in-unit;
+    fall back to the serving count (labelled as servings, not as the measure
+    unit) only when the field is absent.
+    """
+    if e.qty_in_unit is not None:
+        return f"{e.qty_in_unit:g} {e.food_measure_unit or 'serving'}"
+    return f"{e.servings:g} serving" + ("" if e.servings == 1 else "s")
+
+
 def _print_diary(entries: list[FoodLogEntry], when: Any) -> None:
     """Render the diary block (per-meal grouping) for ``--output text``."""
     if not entries:
@@ -424,7 +439,7 @@ def _print_diary(entries: list[FoodLogEntry], when: Any) -> None:
             brand = f" ({e.food_brand})" if e.food_brand else ""
             cal = e.calories
             cal_str = f"  [{cal:.0f} cal]" if cal is not None else ""
-            typer.echo(f"    {i + 1}. {e.food_name}{brand}  × {e.servings}{cal_str}")
+            typer.echo(f"    {i + 1}. {e.food_name}{brand}  × {_portion_text(e)}{cal_str}")
 
 
 def _resolve_pick(picked: int | None, prompt: str, n: int) -> int:
@@ -941,7 +956,7 @@ def delete(
             brand_str = f" ({target.food_brand})" if target.food_brand else ""
             prefix = "🟡 DRY RUN — would delete" if dry_run else "🗑️  Deleting"
             typer.echo(
-                f"{prefix} from {meal_type.name}: {target.food_name}{brand_str} × {target.servings}"
+                f"{prefix} from {meal_type.name}: {target.food_name}{brand_str} × {_portion_text(target)}"
             )
         if not dry_run:
             if not yes and fmt is OutputFormat.text:

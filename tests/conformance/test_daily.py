@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from lose_it.core import daily
 from lose_it.models import FoodLogEntry
 
@@ -106,3 +108,126 @@ def test_daily_details_filters_email_local_part_from_brand(fixture_text):
     soup = by_name["Organic Tomatoe & Roasted Red Pepper Soup"]
     assert soup.food_brand == "", f"expected empty brand, got {soup.food_brand!r}"
     assert soup.food_category == "Tomato", f"expected category='Tomato', got {soup.food_category!r}"
+
+
+# ── Logged quantity in the entry's own unit (FoodServingSize.f4) ──────────────
+#
+# ``servings`` is the canonical serving count, so it only *looks* like the
+# logged portion when the user's unit happens to equal the food's stored
+# serving. Live evidence (2026-09-21 diary, Lose It app as ground truth):
+#
+#   Optifiber (4 g/serving, 9.86 mL/serving), logged 2 tbsp
+#     → FoodServingSize f0=3.0, f4=1.99999, FoodMeasure=2 (tablespoon)
+#     → the app shows "2 Tablespoons"; f0 alone reads as 3 tablespoons
+#   good & gather Garlic Parsley Potatoes (110 g/serving), logged 114 g
+#     → f0=1.03636, f4=114.0, FoodMeasure=8 (grams)
+#     → the grams are 114, not f0 × 100
+#
+# Entities where the two agree (whey 2 scoops, Chobani 1 bottle, 2 servings of
+# chicken) carry f0 == f4, so nothing regresses by preferring f4.
+
+
+def _decoded_entry(
+    *,
+    measure_ord: int,
+    servings: float,
+    qty: float | None,
+    qty_slot: str = "f4",
+) -> dict:
+    """Minimal decoded FoodLogEntry tree with a FoodServingSize block."""
+    serving_size: dict = {
+        "__type__": "com.loseit.core.client.model.FoodServingSize/63998910",
+        "f0": servings,
+        "f1": False,
+        "f2": {
+            "__type__": "com.loseit.core.client.model.FoodMeasure/1457474932",
+            "ordinal": measure_ord,
+        },
+        "f3": servings,
+    }
+    if qty is not None:
+        serving_size[qty_slot] = qty
+    return {
+        "__type__": "com.loseit.core.client.model.FoodLogEntry/264522954",
+        "f0": {
+            "__type__": "com.loseit.core.client.model.FoodIdentifier/1",
+            "f1": "PowderedDrink",
+            "f3": "Optifiber Prebiotic Fiber Supplement",
+            "f4": "Kirkland Signature/Costco",
+            "f9": {
+                "__type__": "com.loseit.core.client.model.SimplePrimaryKey/3621315060",
+                "f0": [1] * 16,
+            },
+        },
+        "f1": None,
+        "f2": {
+            "__type__": "com.loseit.core.client.model.FoodServing/1858865662",
+            "f0": {
+                "__type__": "com.loseit.core.client.model.FoodNutrients/1097231324",
+                "f0": servings,
+                "f1": servings,
+                "f2": {
+                    "__type__": "java.util.HashMap/1797211028",
+                    "entries": [
+                        [
+                            {
+                                "__type__": (
+                                    "com.loseit.healthdata.model.shared.food."
+                                    "FoodMeasurement/2371921172"
+                                ),
+                                "ordinal": 0,
+                            },
+                            45.0,
+                        ]
+                    ],
+                },
+            },
+            "f1": serving_size,
+        },
+        "f6": {
+            "__type__": "com.loseit.core.client.model.SimplePrimaryKey/3621315060",
+            "f0": [2] * 16,
+        },
+    }
+
+
+def test_logged_quantity_is_not_the_serving_count() -> None:
+    """2 tbsp of a 4-g-per-serving powder: servings=3.0 but qty_in_unit=2.0."""
+    entry = daily._entry_from_decoded(
+        _decoded_entry(measure_ord=2, servings=3.0, qty=1.99999),
+        default_hours_from_gmt=-7,
+    )
+    assert entry is not None
+    assert entry.servings == pytest.approx(3.0)
+    assert entry.qty_in_unit == pytest.approx(1.99999)
+    assert entry.food_measure_unit == "tablespoon"
+
+
+def test_gram_entries_keep_the_logged_grams() -> None:
+    """114 g logged against a 110-g-per-serving food decodes to 114 g."""
+    entry = daily._entry_from_decoded(
+        _decoded_entry(measure_ord=8, servings=1.03636, qty=114.0),
+        default_hours_from_gmt=-7,
+    )
+    assert entry is not None
+    assert entry.qty_in_unit == pytest.approx(114.0)
+    assert entry.food_measure_unit == "grams"
+    # The old display path assumed 100 g per serving and printed 103.6 g.
+    assert entry.servings * 100 != pytest.approx(entry.qty_in_unit)
+
+
+def test_qty_in_unit_falls_back_to_f5_and_stays_none_when_absent() -> None:
+    """f5 mirrors f4 on live captures; an entry with neither stays None."""
+    from_f5 = daily._entry_from_decoded(
+        _decoded_entry(measure_ord=2, servings=3.0, qty=2.0, qty_slot="f5"),
+        default_hours_from_gmt=-7,
+    )
+    assert from_f5 is not None
+    assert from_f5.qty_in_unit == pytest.approx(2.0)
+
+    absent = daily._entry_from_decoded(
+        _decoded_entry(measure_ord=2, servings=3.0, qty=None),
+        default_hours_from_gmt=-7,
+    )
+    assert absent is not None
+    assert absent.qty_in_unit is None

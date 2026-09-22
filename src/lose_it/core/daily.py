@@ -244,7 +244,14 @@ def _entry_from_decoded(
                 break
 
     # FoodServingSize.f0 = quantity → servings on the FoodServing.
+    # FoodServingSize.f4 (falling back to f5) = the amount the entry was logged
+    # in, in the entry's FoodMeasure unit. f0 is the canonical serving count, so
+    # the two differ whenever the logged unit isn't the food's stored serving:
+    # 2 tbsp of a 4-g-per-serving powder is f0=3.0 / f4=2.0. Verified against
+    # live fixtures for tablespoon (2.0), grams (114.0, food serving 110 g) and
+    # scoop/bottle/serving logs, where f0 and f4 agree.
     servings = 1.0
+    qty_in_unit: float | None = None
     serving_size = next(
         (d for d in _walk_dicts(fle) if d.get("__type__") == _FOOD_SERVING_SIZE_FQCN),
         None,
@@ -253,6 +260,11 @@ def _entry_from_decoded(
         q = serving_size.get("f0")
         if isinstance(q, (int, float)):
             servings = float(q)
+        for slot in ("f4", "f5"):
+            qty = serving_size.get(slot)
+            if isinstance(qty, (int, float)):
+                qty_in_unit = float(qty)
+                break
 
     # Nutrients — any HashMap whose keys carry an ordinal 0..30 and values are numeric.
     nutrients: list[tuple[int, float]] = []
@@ -320,6 +332,7 @@ def _entry_from_decoded(
         food_measure_ordinal=food_measure_ord,
         servings=servings,
         food_identifier_code=food_identifier_code,
+        qty_in_unit=qty_in_unit,
         food_category=food_category,
         food_name=food_name,
         food_brand=food_brand,
