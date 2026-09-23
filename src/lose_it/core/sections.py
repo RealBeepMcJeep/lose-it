@@ -18,20 +18,18 @@ silently drops the section. The app's own write is::
     UPDATE EntityValues SET Value = ?, Deleted = ?, LastUpdated = strftime('%s','now')*1000
       WHERE EntityId = ? AND EntityType = ? AND Name = ?
 
-How a write reaches the server (verified 2026-09-23): the account database is
-round-tripped through the app's own endpoints — download ``/user/database``,
-patch the row locally, upload ``/user/database/backup`` as multipart. Two
-properties matter to callers:
+How a write reaches the server (verified on the owner's phone, 2026-09-23):
+the app's sync gateway (:mod:`lose_it.core.gateway`). The row goes up as an
+entity-only transaction, the same shape the app queues when an entry is moved,
+keyed by the entry's gateway ``uniqueId`` (the web entry key, byte-reversed).
+The server acknowledges it, records it in the change feed, and the app renders
+it on its next sync.
 
-* the upload is **authoritative** (the server takes the uploaded file as the
-  new state), so the database must be fetched immediately before patching and
-  the caller must verify the effect with a read afterwards;
-* the upload endpoint answers **HTTP 500 even when the write applies**, so its
-  status code is diagnostic only.
-
-Posting a gateway transaction bundle to ``/user/database`` does nothing — the
-handler ignores request bodies. See the ``mobile-api-route`` reference in the
-``loseit-integration`` skill for the full evidence trail.
+The account-database round trip (download ``/user/database``, patch, upload
+``/user/database/backup``) also stores the row, but only in the app's *backup*
+file: the app never shows it, and the upload replaces the whole server copy.
+The helpers for it stay here for reading and for tests; nothing writes that
+way any more.
 """
 
 from __future__ import annotations
@@ -41,6 +39,7 @@ import time
 
 from .._logging import logger
 from ._http import HttpClient
+from .gateway import EntityValue, GatewayWrite, gateway_entity_id, send_entity_values
 
 #: ``EntityValues.EntityType`` for a ``FoodLogEntry`` row (the app's own value).
 ENTITY_TYPE_FOOD_LOG_ENTRY = 9
@@ -162,30 +161,30 @@ def read_entity_value(db_bytes: bytes, entry_pk: bytes) -> dict[str, object] | N
         connection.close()
 
 
-def set_food_log_section(http: HttpClient, entry_pk: bytes, ordinal: int) -> int:
-    """File ``entry_pk`` into a snack section, server-side.
-
-    Downloads the account database, patches the row, uploads it back. Returns
-    the upload's HTTP status, which is **not** a success signal (the endpoint
-    answers 500 on applied writes too) — verify with a diary read.
+def set_food_log_section(http: HttpClient, entry_pk: bytes, ordinal: int) -> GatewayWrite:
+    """File ``entry_pk`` into a snack section through the app's sync gateway.
 
     ``ordinal`` is ``1`` (Morning Snacks), ``2`` (Afternoon Snacks) or ``3``
-    (plain Snacks, which the reader also infers from a missing row).
+    (plain Snacks). ``entry_pk`` is the 16-byte web entry key (what
+    ``log_food`` returns and the diary read reports).
+
+    Returns the gateway outcome: ``acknowledged`` when the server echoed the
+    transaction, ``stored`` with the value the change feed now reports.
     """
     value = section_value(ordinal)
+    _check_entry_pk(entry_pk)
+    row = EntityValue(
+        entity_id=gateway_entity_id(entry_pk),
+        entity_type=ENTITY_TYPE_FOOD_LOG_ENTRY,
+        name=FOOD_LOG_TYPE_EXTRA,
+        value=value,
+        deleted=False,
+        last_updated=int(time.time() * 1000),
+    )
     logger.info(
         "sections.set_food_log_section: pk={pk} section={ordinal} value={value!r}",
         pk=entry_pk.hex(),
         ordinal=int(ordinal),
         value=value,
     )
-    database = http.fetch_user_database()
-    patched = patch_entity_value(database, entry_pk, value)
-    status = http.upload_user_database(patched)
-    logger.info(
-        "sections.set_food_log_section: uploaded ({before}→{after} bytes, HTTP {status})",
-        before=len(database),
-        after=len(patched),
-        status=status,
-    )
-    return status
+    return send_entity_values(http, [row])

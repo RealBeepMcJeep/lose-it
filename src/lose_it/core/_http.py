@@ -22,6 +22,7 @@ import httpx
 
 from .._logging import headers_enabled, logger
 from ._config import Config
+from .gateway import GATEWAY_URL
 
 # A GWT-RPC envelope's first ``|``-delimited field is its method name as
 # an integer pointing into the string table; extracting the method name
@@ -43,6 +44,11 @@ DATABASE_URL = "https://www.loseit.com/user/database"
 DATABASE_BACKUP_URL = DATABASE_URL + "/backup"
 # The app identifies itself; the account endpoints are happiest when we do too.
 APP_USER_AGENT = "LoseIt/18.4.600 (Android; 35)"
+
+# The app's sync channel (see ``gateway.py``). Its client (APK ``tg9``/``ng9``)
+# sends only these headers; a generic user agent gets a bot-wall page instead.
+GATEWAY_APP_VERSION = "18.4.600"
+GATEWAY_USER_AGENT = f"LoseIt!/{GATEWAY_APP_VERSION} (Android 15; lose-it-sdk)"
 
 
 def _extract_rpc_method(payload: str) -> str:
@@ -82,6 +88,8 @@ class HttpClient:
     def __init__(self, config: Config, token: str, *, transport: httpx.BaseTransport | None = None):
         self.config = config
         self.token = token
+        self._transport = transport
+        self._gateway: httpx.Client | None = None
         headers = {
             "content-type": "text/x-gwt-rpc; charset=UTF-8",
             "x-gwt-module-base": config.base_url,
@@ -109,6 +117,8 @@ class HttpClient:
 
     def close(self) -> None:
         self._client.close()
+        if self._gateway is not None:
+            self._gateway.close()
 
     def __enter__(self):
         return self
@@ -326,3 +336,39 @@ class HttpClient:
             size=len(data),
         )
         return resp.status_code
+
+    def post_gateway(self, body: bytes) -> bytes:
+        """POST a bundle to the app's sync gateway and return the protobuf reply.
+
+        A separate session, because the web client's defaults (GWT content
+        type, origin, permutation headers) do not belong on an app request.
+        The device id is stable per account, so the server sees one device.
+        """
+        if self._gateway is None:
+            device = str(uuid.uuid5(uuid.NAMESPACE_URL, f"lose-it-sdk/{self.config.user_id}")).upper()
+            self._gateway = httpx.Client(
+                headers={
+                    "user-agent": GATEWAY_USER_AGENT,
+                    "x-loseit-version": GATEWAY_APP_VERSION,
+                    "x-loseit-device": device,
+                    "x-loseit-device-type": "Android",
+                    "x-loseit-hoursfromgmt": str(self.config.hours_from_gmt),
+                    "cookie": "loseitlocale=en-US",
+                    "content-type": "application/octet-stream; charset=utf-8",
+                    "accept": "*/*",
+                },
+                timeout=60.0,
+                transport=self._transport,
+            )
+        logger.debug("post_gateway: POST {url} ({size} bytes)", url=GATEWAY_URL, size=len(body))
+        resp = self._gateway.post(
+            GATEWAY_URL,
+            content=body,
+            headers={"authorization": f"Bearer {self.token}"},
+        )
+        if resp.status_code in (401, 403):
+            raise LoseItAuthError(f"HTTP {resp.status_code}: token expired or invalid")
+        if resp.status_code != 200:
+            raise LoseItError(f"gateway call failed: HTTP {resp.status_code}: {resp.text[:200]}")
+        logger.debug("post_gateway OK ({size} bytes)", size=len(resp.content))
+        return resp.content

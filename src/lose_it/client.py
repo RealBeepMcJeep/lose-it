@@ -63,6 +63,7 @@ from .core.auth import (
     load_token,
     save_token,
 )
+from .core.gateway import GatewayWrite
 from .core.init import get_daydate_key, get_init_day_keys
 from .enums import MealType, ServingUnit
 from .models import (
@@ -483,37 +484,34 @@ class LoseIt:
             entry_pk=entry_pk,
         )
 
-    def set_entry_section(self, entry_pk: bytes, ordinal: int) -> int:
-        """File a logged entry into a snack sub-slot, server-side.
+    def set_entry_section(self, entry_pk: bytes, ordinal: int) -> GatewayWrite:
+        """File a logged entry into a snack sub-slot, the way the app does.
 
         Morning Snacks and Afternoon Snacks are not entry fields: they are
-        ``EntityValues`` rows keyed by the entry's ``UniqueId``, and the RPC
-        write path parses the section and then drops it. This method writes the
-        row the way the app does — download the account database, patch the
-        row, upload it back — so it costs two round trips of ~1.5 MB and
-        applies the database as it stood at download time.
+        ``EntityValues`` rows keyed by the entry's id, and the RPC write path
+        drops them. This sends the row through the app's sync gateway, which
+        the app renders from (verified on a phone, 2026-09-23). Three small
+        requests: token probe, write, change-feed read-back.
 
         Args:
-            entry_pk: the 16-byte key :meth:`log_food` returned for the entry
-                (``LoggedFood.entry_pk``), which is the key the server stores.
+            entry_pk: the 16-byte entry key — ``LoggedFood.entry_pk`` after a
+                log, or the entry id the diary read reports.
             ordinal: ``1`` Morning Snacks, ``2`` Afternoon Snacks, ``3`` plain
                 Snacks.
 
         Returns:
-            The upload's HTTP status. This is **not** a success signal — the
-            endpoint answers 500 even when the write applies — so callers must
-            confirm with a diary read before reporting anything.
+            :class:`~lose_it.core.gateway.GatewayWrite`; ``confirmed`` is true
+            when the server acknowledged the write *and* the change feed
+            carries the row. The web diary read reflects it too.
         """
         return _sections.set_food_log_section(self.http, entry_pk, ordinal)
 
     def read_entry_section(self, entry_pk: bytes) -> dict[str, object] | None:
-        """Read back the snack sub-slot the server holds for ``entry_pk``.
+        """Read the snack sub-slot the account *backup* database holds for ``entry_pk``.
 
-        The web diary read does **not** report sections written through
-        :meth:`set_entry_section` — verified 2026-09-23 with both this client and
-        a raw upload: the server database said ``'1'`` while the RPC read still
-        said plain Snacks. The app reads the database, so the database is the
-        honest oracle:
+        The backup database refreshes in batches (minutes to hours), so this
+        can lag a gateway write. For the current section, read the day — the
+        web diary read reports gateway-written sections. Row shape:
 
             {"value": "1", "deleted": False, "last_updated": 1790179626000}
 

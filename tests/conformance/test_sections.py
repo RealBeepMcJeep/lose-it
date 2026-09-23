@@ -1,10 +1,8 @@
-"""Snack sub-slots written through the account-database round trip.
+"""Snack sub-slot rows in the account database, and the transport for it.
 
-Covers the row logic (``patch_entity_value`` / ``read_entity_value``), the
-transport shape (``fetch_user_database`` / ``upload_user_database``) and the
-orchestration (``set_food_log_section``) — including the two quirks the wire
-showed: the upload answers HTTP 500 on applied writes, and the row is keyed by
-the entry's ``UniqueId``.
+Covers the row logic (``patch_entity_value`` / ``read_entity_value``) and the
+database transport (``fetch_user_database`` / ``upload_user_database``). Writes
+now go through the sync gateway — see ``test_gateway.py``.
 """
 
 from __future__ import annotations
@@ -201,25 +199,6 @@ def test_fetch_maps_auth_failure(test_config, httpx_mock):
 # ── orchestration ───────────────────────────────────────────────────────────
 
 
-def test_set_food_log_section_round_trip(test_config, httpx_mock):
-    database = _fixture_database()
-    httpx_mock.add_response(url=DATABASE_URL, method="GET", content=database)
-    httpx_mock.add_response(url=DATABASE_BACKUP_URL, method="POST", status_code=500, content=b"")
-
-    http = HttpClient(test_config, token="test-token")
-    try:
-        status = sections.set_food_log_section(http, ENTRY_PK, sections.SECTION_MORNING)
-        assert status == 500
-
-        upload_request = httpx_mock.get_requests()[1]
-        uploaded = _sqlite_from_multipart(upload_request.content)
-        row = sections.read_entity_value(uploaded, ENTRY_PK)
-        assert row is not None
-        assert row["value"] == sections.section_value(sections.SECTION_MORNING)
-    finally:
-        http.close()
-
-
 def test_set_food_log_section_rejects_bad_ordinal(test_config):
     http = HttpClient(test_config, token="test-token")
     try:
@@ -227,27 +206,6 @@ def test_set_food_log_section_rejects_bad_ordinal(test_config):
             sections.set_food_log_section(http, ENTRY_PK, 7)
     finally:
         http.close()
-
-
-def test_client_set_entry_section(test_config, httpx_mock):
-    """The high-level client method is what the MCP bridge calls."""
-    from lose_it import LoseIt
-
-    database = _fixture_database()
-    httpx_mock.add_response(url=DATABASE_URL, method="GET", content=database)
-    httpx_mock.add_response(url=DATABASE_BACKUP_URL, method="POST", status_code=500, content=b"")
-
-    client = LoseIt(test_config, "fake-jwt-token")
-    try:
-        status = client.set_entry_section(ENTRY_PK, sections.SECTION_AFTERNOON)
-    finally:
-        client.close()
-
-    assert status == 500
-    upload_request = httpx_mock.get_requests()[1]
-    row = sections.read_entity_value(_sqlite_from_multipart(upload_request.content), ENTRY_PK)
-    assert row is not None
-    assert row["value"] == sections.section_value(sections.SECTION_AFTERNOON)
 
 
 def test_client_read_entry_section(test_config, httpx_mock):
