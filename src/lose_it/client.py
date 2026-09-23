@@ -46,6 +46,7 @@ from .core import auth as _auth
 from .core import daily as _daily
 from .core import entries as _entries
 from .core import foods as _foods
+from .core import sections as _sections
 from .core._config import Config
 from .core._dates import day_number_for
 from .core._http import HttpClient
@@ -481,6 +482,29 @@ class LoseIt:
             dry_run=dry_run,
             entry_pk=entry_pk,
         )
+
+    def set_entry_section(self, entry_pk: bytes, ordinal: int) -> int:
+        """File a logged entry into a snack sub-slot, server-side.
+
+        Morning Snacks and Afternoon Snacks are not entry fields: they are
+        ``EntityValues`` rows keyed by the entry's ``UniqueId``, and the RPC
+        write path parses the section and then drops it. This method writes the
+        row the way the app does — download the account database, patch the
+        row, upload it back — so it costs two round trips of ~1.5 MB and
+        applies the database as it stood at download time.
+
+        Args:
+            entry_pk: the 16-byte key :meth:`log_food` returned for the entry
+                (``LoggedFood.entry_pk``), which is the key the server stores.
+            ordinal: ``1`` Morning Snacks, ``2`` Afternoon Snacks, ``3`` plain
+                Snacks.
+
+        Returns:
+            The upload's HTTP status. This is **not** a success signal — the
+            endpoint answers 500 even when the write applies — so callers must
+            confirm with a diary read before reporting anything.
+        """
+        return _sections.set_food_log_section(self.http, entry_pk, ordinal)
 
     def delete_entry(
         self,

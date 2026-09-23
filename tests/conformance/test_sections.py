@@ -229,6 +229,27 @@ def test_set_food_log_section_rejects_bad_ordinal(test_config):
         http.close()
 
 
+def test_client_set_entry_section(test_config, httpx_mock):
+    """The high-level client method is what the MCP bridge calls."""
+    from lose_it import LoseIt
+
+    database = _fixture_database()
+    httpx_mock.add_response(url=DATABASE_URL, method="GET", content=database)
+    httpx_mock.add_response(url=DATABASE_BACKUP_URL, method="POST", status_code=500, content=b"")
+
+    client = LoseIt(test_config, "fake-jwt-token")
+    try:
+        status = client.set_entry_section(ENTRY_PK, sections.SECTION_AFTERNOON)
+    finally:
+        client.close()
+
+    assert status == 500
+    upload_request = httpx_mock.get_requests()[1]
+    row = sections.read_entity_value(_sqlite_from_multipart(upload_request.content), ENTRY_PK)
+    assert row is not None
+    assert row["value"] == sections.section_value(sections.SECTION_AFTERNOON)
+
+
 # ── the key the whole design rests on ───────────────────────────────────────
 
 
