@@ -448,11 +448,12 @@ class LoseIt:
             serving_unit=serving_unit,
         )
         calories = scaled_calories(unsaved, portion.canonical_servings)
+        entry_pk: bytes | None = None
 
         if not dry_run:
             day_num = day_number_for(when)
             day_key = get_daydate_key(self.http, day_num) or ""
-            _entries.log_food(
+            entry_pk_signed = _entries.log_food(
                 self.http,
                 unsaved,
                 int(meal_type),
@@ -464,6 +465,9 @@ class LoseIt:
                 quantity_in_chosen_unit=portion.quantity_in_chosen_unit,
                 conversion_factor=portion.conversion_factor,
             )
+            # The server stores this key verbatim as FoodLogEntries.UniqueId,
+            # so row-level features (snack sub-slots) can address the entry.
+            entry_pk = bytes(v & 0xFF for v in entry_pk_signed)
 
         return LoggedFood(
             food=food,
@@ -475,6 +479,7 @@ class LoseIt:
             portion_unit=portion.display_unit,
             calories=calories,
             dry_run=dry_run,
+            entry_pk=entry_pk,
         )
 
     def delete_entry(

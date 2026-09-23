@@ -428,6 +428,11 @@ class LoggedFood:
     portion_unit: str
     calories: float | None
     dry_run: bool
+    #: The entry's 16-byte primary key, exactly as the server stores it in
+    #: ``FoodLogEntries.UniqueId``. ``None`` on a dry run. Row-level features
+    #: the RPC API cannot express — see :mod:`lose_it.core.sections` — address
+    #: the entry with this key.
+    entry_pk: bytes | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe projection. Mirrors the ``loseit log --output json``

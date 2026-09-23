@@ -39,6 +39,7 @@ def _build_log_payload(
     measure_ord_override: int | None = None,
     quantity_in_chosen_unit: float | None = None,
     conversion_factor: float | None = None,
+    entry_pk: list[int] | None = None,
 ) -> str:
     """Build the ``updateFoodLogEntry`` envelope.
 
@@ -88,7 +89,8 @@ def _build_log_payload(
     # against our wire dump (pre-scaled, e.g. cal=207). The UI does not
     # pre-scale.
     nutrients = {k: v for k, v in (unsaved.nutrients or {}).items() if k in _CORE_NUTRIENT_ORDINALS}
-    entry_pk = _uuid_signed_bytes(uuid.uuid4())
+    if entry_pk is None:
+        entry_pk = _uuid_signed_bytes(uuid.uuid4())
 
     strings = [
         config.base_url,  # 1
@@ -254,8 +256,13 @@ def log_food(
     measure_ord_override: int | None = None,
     quantity_in_chosen_unit: float | None = None,
     conversion_factor: float | None = None,
-) -> None:
+) -> list[int]:
     """Log ``unsaved`` to the given meal/day with ``servings`` portions.
+
+    Returns the entry's primary key (16 signed bytes). The server stores that
+    key verbatim as ``FoodLogEntries.UniqueId``, so a caller that needs to
+    touch row-level data the RPC API cannot express — the snack sub-slot rows
+    in :mod:`lose_it.core.sections` — can address the entry with it.
 
     ``extra_ordinal`` picks the snack sub-section (1 = Morning Snacks,
     2 = Afternoon Snacks, 0 = plain Snacks) and must accompany meal ordinal 3.
@@ -288,6 +295,7 @@ def log_food(
         udk=unsaved.day_key,
         ni=len(unsaved.nutrients or {}),
     )
+    entry_pk = _uuid_signed_bytes(uuid.uuid4())
     http.post_rpc(
         _build_log_payload(
             http.config,
@@ -300,8 +308,10 @@ def log_food(
             measure_ord_override=measure_ord_override,
             quantity_in_chosen_unit=quantity_in_chosen_unit,
             conversion_factor=conversion_factor,
+            entry_pk=entry_pk,
         )
     )
+    return entry_pk
 
 
 # ── deleteFoodLogEntry ──────────────────────────────────────────────────────
