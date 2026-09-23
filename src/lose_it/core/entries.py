@@ -35,11 +35,17 @@ def _build_log_payload(
     day_key: str,
     day_num: int,
     servings: float,
+    extra_ordinal: int = 0,
     measure_ord_override: int | None = None,
     quantity_in_chosen_unit: float | None = None,
     conversion_factor: float | None = None,
 ) -> str:
     """Build the ``updateFoodLogEntry`` envelope.
+
+    ``extra_ordinal`` selects the app's snack sub-section: ``1`` = Morning
+    Snacks, ``2`` = Afternoon Snacks, ``0`` (default) = the plain Snacks group.
+    It rides in ``FoodLogEntryContext.f9`` (``FoodLogEntryTypeExtra``), the
+    field the diary read parses back into ``FoodLogEntry.extra_ordinal``.
 
     The trailing three parameters together implement the unit-override
     flow (see ``docs/serving-unit-spec.md``). They must be passed as a
@@ -113,6 +119,10 @@ def _build_log_payload(
         "java.lang.Double/858496421",  # 26
         "com.loseit.core.client.model.FoodServingSize/63998910",  # 27
         "com.loseit.core.client.model.FoodMeasure/1457474932",  # 28
+        # Appended last on purpose: the refs in ``parts`` are 1-based indexes
+        # into this list, so a new string must land at the end or every
+        # existing ref shifts. 29 = FoodLogEntryTypeExtra (snack section).
+        "com.loseit.core.client.model.interfaces.FoodLogEntryTypeExtra/4048538730",
     ]
     # Default measure ordinal: 45 is a generic container-ish fallback observed
     # in the original captured replay (used when unsaved didn't carry one).
@@ -186,7 +196,10 @@ def _build_log_payload(
         "0",
         "21",
         str(meal_ordinal),
-        "0",
+        # f9 → FoodLogEntryTypeExtra. Left null when unset, which is what the
+        # server stores for the app's plain Snacks group; 1/2 file the entry
+        # into Morning/Afternoon Snacks. Same object encoding as f8 above.
+        *(["29", str(extra_ordinal)] if extra_ordinal else ["0"]),
         "22",
         "23",
         "1",
@@ -237,11 +250,15 @@ def log_food(
     day_key: str,
     day_num: int,
     servings: float = 1.0,
+    extra_ordinal: int = 0,
     measure_ord_override: int | None = None,
     quantity_in_chosen_unit: float | None = None,
     conversion_factor: float | None = None,
 ) -> None:
     """Log ``unsaved`` to the given meal/day with ``servings`` portions.
+
+    ``extra_ordinal`` picks the snack sub-section (1 = Morning Snacks,
+    2 = Afternoon Snacks, 0 = plain Snacks) and must accompany meal ordinal 3.
 
     The trailing three parameters implement the unit-override flow (see
     ``docs/serving-unit-spec.md``). When set, ``servings`` is interpreted
@@ -279,6 +296,7 @@ def log_food(
             day_key,
             day_num,
             servings,
+            extra_ordinal=extra_ordinal,
             measure_ord_override=measure_ord_override,
             quantity_in_chosen_unit=quantity_in_chosen_unit,
             conversion_factor=conversion_factor,

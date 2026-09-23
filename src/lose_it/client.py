@@ -398,6 +398,7 @@ class LoseIt:
         *,
         serving_amount: float | None = None,
         serving_unit: ServingUnit | str | None = None,
+        extra_ordinal: int = 0,
         when: date | None = None,
         dry_run: bool = False,
     ) -> LoggedFood:
@@ -417,6 +418,9 @@ class LoseIt:
             serving_unit: A :class:`ServingUnit` member or its string
                 form (``"mL"``, ``"g"``, ``"cup"``, …). Common aliases
                 like ``"cups"`` / ``"milliliter"`` are also resolved.
+            extra_ordinal: Snack sub-section, for a ``snacks``-meal log
+                only: ``1`` = Morning Snacks, ``2`` = Afternoon Snacks,
+                ``0`` (default) = the plain Snacks group.
             when: Target date. ``None`` → today.
             dry_run: Skip the ``updateFoodLogEntry`` RPC and the
                 day-key lookup; still returns a :class:`LoggedFood` with
@@ -455,6 +459,7 @@ class LoseIt:
                 day_key,
                 day_num,
                 portion.canonical_servings,
+                extra_ordinal=extra_ordinal,
                 measure_ord_override=portion.measure_ord_override,
                 quantity_in_chosen_unit=portion.quantity_in_chosen_unit,
                 conversion_factor=portion.conversion_factor,

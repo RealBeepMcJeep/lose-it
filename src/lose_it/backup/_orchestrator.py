@@ -215,7 +215,15 @@ class _OrchestratorClient(Protocol):
 
     def describe_food(self, food_id: str) -> Any: ...
 
-    def log_food(self, food: Any, meal: Any = ..., servings: float = ..., **kwargs: Any) -> Any: ...
+    def log_food(
+        self,
+        food: Any,
+        meal: Any = ...,
+        servings: float = ...,
+        *,
+        extra_ordinal: int = ...,
+        **kwargs: Any,
+    ) -> Any: ...
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
