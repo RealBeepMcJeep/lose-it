@@ -250,6 +250,26 @@ def test_client_set_entry_section(test_config, httpx_mock):
     assert row["value"] == sections.section_value(sections.SECTION_AFTERNOON)
 
 
+def test_client_read_entry_section(test_config, httpx_mock):
+    """The database is the oracle, because the RPC read cannot see the row."""
+    from lose_it import LoseIt
+
+    database = _fixture_database(with_row=ENTRY_PK, value="1")
+    # two reads → two mocked downloads
+    httpx_mock.add_response(url=DATABASE_URL, method="GET", content=database)
+    httpx_mock.add_response(url=DATABASE_URL, method="GET", content=database)
+
+    client = LoseIt(test_config, "fake-jwt-token")
+    try:
+        row = client.read_entry_section(ENTRY_PK)
+        assert row is not None
+        assert row["value"] == "1"
+        assert row["deleted"] is False
+        assert client.read_entry_section(OTHER_PK) is None
+    finally:
+        client.close()
+
+
 # ── the key the whole design rests on ───────────────────────────────────────
 
 

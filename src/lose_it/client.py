@@ -506,6 +506,21 @@ class LoseIt:
         """
         return _sections.set_food_log_section(self.http, entry_pk, ordinal)
 
+    def read_entry_section(self, entry_pk: bytes) -> dict[str, object] | None:
+        """Read back the snack sub-slot the server holds for ``entry_pk``.
+
+        The web diary read does **not** report sections written through
+        :meth:`set_entry_section` — verified 2026-09-23 with both this client and
+        a raw upload: the server database said ``'1'`` while the RPC read still
+        said plain Snacks. The app reads the database, so the database is the
+        honest oracle:
+
+            {"value": "1", "deleted": False, "last_updated": 1790179626000}
+
+        ``None`` means no row exists, which the app renders as plain Snacks.
+        """
+        return _sections.read_entity_value(self.http.fetch_user_database(), entry_pk)
+
     def delete_entry(
         self,
         entry: FoodLogEntry,
